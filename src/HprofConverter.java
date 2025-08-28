@@ -34,14 +34,14 @@ public class HprofConverter {
     private boolean convert = false;
     private boolean dumpCharArray = false;
     private boolean dumpString = false;
-    private Map charArrayMap = new TreeMap();
-    private Map pendingStrings = new TreeMap();
-    private List hprof_files = new ArrayList();
+    private Map<Id,char[]> charArrayMap = new TreeMap<>();
+    private Map<Id,Id> pendingStrings = new TreeMap<>();
+    private List<String> hprof_files = new ArrayList<>();
     private PrintWriter hprof_out = null;
     private Logger logger = Logger.getLogger(getClass().getName());
-    private Map nameMap = new HashMap();
-    private Map cnDic = new HashMap();
-    private Map clsDic = new HashMap();
+    private Map<Id,String> nameMap = new HashMap<>();
+    private Map<Id,Id> cnDic = new HashMap<>();
+    private Map<Id,ClassInfo> clsDic = new HashMap<>();
     private MappedByteBuffer buf;
     private int pointerSize;
     private long tms;
@@ -828,26 +828,48 @@ public class HprofConverter {
                 setupOutput();
             }
 
+            int countUtf8 = 0, countLoadClass = 0, countHeapDump = 0, countOther = 0;
+	    Map<Integer,Integer> tagCountMap = new HashMap<>();
             while (buf.position() < buf.limit()) {
                 byte tag = buf.get();
                 int eltms = buf.getInt();
                 remaining = buf.getInt();
 
+		Integer count = tagCountMap.get((int)tag);
+		if (count == null) {
+	          tagCountMap.put((int)tag, 1);
+                } else {
+                  int iv = count.intValue();
+		  iv++;
+		  tagCountMap.put((int)tag, iv);
+		}
+
+		// logger.finer(String.format("processFile pass %d tag %#x ms %d rem %d", pass, tag, eltms, remaining));
+
+		// TODO 1.0.2 tag types HPROF_HEAP_DUMP_SEGMENT HPROF_HEAP_DUMP_END are not handled.  
+		// These tag types appear in JDK11 heapdump.
                 switch (tag) {
                     case HPROF_UTF8:
                         process_UTF8();
+			countUtf8++;
                         break;
                     case HPROF_LOAD_CLASS:
                         process_LOAD_CLASS();
+			countLoadClass++;
                         break;
                     case HPROF_HEAP_DUMP:
                         process_HEAP_DUMP();
+			countHeapDump++;
                         break;
                     default:
                         byte[] batmp = new byte[remaining];
                         buf.get(batmp);
+			countOther++;
                 }
             }
+	    logger.finer(String.format("processFile pass %d utf8 %d loadClass %d heapDump %d other %d", 
+		pass, countUtf8, countLoadClass, countHeapDump, countOther));
+	    logger.finer(String.format("processFile countMap %s", tagCountMap));
         } catch (FileNotFoundException ex) {
             Logger.getLogger(HprofConverter.class.getName()).log(Level.SEVERE, null, ex);
         } catch (UnsupportedEncodingException uee) {
@@ -995,6 +1017,10 @@ public class HprofConverter {
     public static final byte HPROF_CONTROL_SETTINGS = 0x0e;
     public static final byte HPROF_LOCKSTATS_WAIT_TIME = 0x10;
     public static final byte HPROF_LOCKSTATS_HOLD_TIME = 0x11;
+
+    // 1.0.2 record types
+    public static final byte HPROF_HEAP_DUMP_SEGMENT       = 0x1C;
+    public static final byte HPROF_HEAP_DUMP_END           = 0x2C
 // HPROF_GC_ROOT_UNKNOWN       = 0xff
     public static final byte HPROF_GC_ROOT_UNKNOWN = -1;
     public static final byte HPROF_GC_ROOT_JNI_GLOBAL = 0x01;
@@ -1094,7 +1120,7 @@ class ClassInfo {
 
     long superid;
     int isize;
-    List fieldSpec;
+    List<FieldSpec> fieldSpec;
 
     public ClassInfo(long superid, int isize) {
         this.superid = superid;
@@ -1103,7 +1129,7 @@ class ClassInfo {
 
     public void addFieldSpec(FieldSpec fs) {
         if (fieldSpec == null) {
-            fieldSpec = new ArrayList();
+            fieldSpec = new ArrayList<>();
         }
         fieldSpec.add(fs);
     }
@@ -1124,5 +1150,3 @@ class ClassInfo {
         return sb.toString();
     }
 }
-
-
